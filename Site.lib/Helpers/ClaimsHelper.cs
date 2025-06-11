@@ -1,10 +1,9 @@
 ﻿using System.Reflection;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
-using Ore.Lib.ViewModels;
-using Ore.Lib.ViewModels.Auth;
+using Site.lib.ViewModels;
 
-namespace Ore.Lib.Authorization.Helpers
+namespace Site.lib.Helpers
 {
 	public static class ClaimsHelper
 {

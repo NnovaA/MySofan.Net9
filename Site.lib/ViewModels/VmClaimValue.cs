@@ -1,4 +1,4 @@
-﻿namespace Ore.Lib.ViewModels.Auth
+﻿namespace Site.lib.ViewModels
 {
     public class VmClaimValue
     {

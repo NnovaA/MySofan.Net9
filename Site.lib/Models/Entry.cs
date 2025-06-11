@@ -4,8 +4,8 @@ public class Entry
 {
     public Guid EntryId { get; set; }
     public long AttributeId { get; set; }
-    public byte status { get; set; }
-    public int order { get; set; }
+    public byte Status { get; set; }
+    public int Order { get; set; }
     public Guid AddedBy { get; set; }
     public Guid UpdatedBy { get; set; }
     public long DateAdded { get; set; } = DateTime.Now.Ticks;

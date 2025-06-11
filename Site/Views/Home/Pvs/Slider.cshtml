@@ -1,2 +1,50 @@
-﻿@model TModel
-
+﻿@using Microsoft.AspNetCore.Mvc.TagHelpers
+@using Site.lib.Sofan.Seed
+@{
+    var id = SeedHomeSlider.HomeSlider.EntryId.ToString();
+    var vm = OreLoc.GetEntry(id, CultureId);
+    var images = OreLoc.EntryImages(id);
+    var array = vm.Title.Split(',');
+    var carousel = string.Join(",", array.Select(c => $"\"{c}\""));
+}
+<section class="p-0 full-screen background-position-center-top position-relative lg-overflow-hidden sm-mb-50px h-100 background cover background-no-repeat"
+         style="background-image: url('@UrlSite/assets/images/bg/section-bg.jpg')">
+    <div class="bg-gradient-black-green position-absolute left-0px top-0px h-100 w-100 z-index-minus-1"></div>
+    <div class="container xs-mb-25" style="height: 100vh!important">
+        <div class="row align-items-center h-100">
+            <div class="col-lg-7 col-12" data-anime='{ "el": "childs", "opacity": [0, 1], "translateX": [-200, 0], "staggervalue": 300, "delay": 700,"duration": 2500, "easing": "easeOutCubic" }'>
+                <partial name="Pvs/Finance" model="@images"/>
+            </div>
+            <div class="col-lg-5 col-12 sm-mb-25">
+                <div class="h-100 xs-mb-25">
+                    <div class="fs-70 sm-fs-50 lg-fs-80 text-dark-gray lh-100 fw-500 mb-6 fancy-text-style-4" 
+                         data-anime='{ "el": "childs", "opacity": [0, 1], "translateX": [-100, 0], "staggervalue": 300, "duration": 1000, "easing": "easeOutCubic" }'>
+                        @if (CultureId == "en")
+                        {
+                            <span class="fw-600 d-block text-base-color" data-fancy-text='{ "effect": "wave", "string": [@carousel], "duration": 4000 }'></span>    
+                        }
+                        else
+                        {
+                            <span class="fw-600 d-block text-base-color">@vm.Title</span>
+                        }
+                        
+                        <h3 class="d-block text-base-color fw-600">@vm.SubTitle</h3>
+                    </div>
+                    <div class="fs-20 lh-34 xs-fs-19 mb-35px xs-mb-20px w-85 lg-w-95 sm-w-100 ls-minus-05px"
+                         data-anime='{ "opacity": [0, 1], "translateX": [-100, 0], "duration": 1000, "delay": 1000, "easing": "easeOutCubic" }'>
+                        @Html.Raw(vm.Content.Trim())
+                    </div>
+                    <div class="w-100 text-center sm-mb-25"
+                        data-anime='{ "el": "childs", "opacity": [0, 1], "translateX": [-100, 0], "staggervalue": -200, "duration": 1000, "delay": 1500, "easing": "easeOutCubic" }'>
+                        <a href="@UrlSite/@CultureId/products" class="btn btn-small btn-double-border btn-border-base-color me-25px xs-me-15px">
+                        <span>
+                            <span class="btn-double-text" data-text="View our products" data-loc-attr="data-text:View.Products" data-loc="Discover.Sofan"></span>
+                            <span><i class="fa-solid fa-arrow-right"></i></span>
+                        </span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>

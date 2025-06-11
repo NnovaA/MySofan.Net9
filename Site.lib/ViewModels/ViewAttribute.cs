@@ -1,8 +1,8 @@
-﻿namespace Ore.Lib.ViewModels
+﻿namespace Site.lib.ViewModels
 {
     public class ViewAttribute
     {
-        public long AttrId { get; set; }
+        public long AttributeId { get; set; }
         public long ParentId { get; set; }
         public string CultureId { get; set; }
         public int Order { get; set; }

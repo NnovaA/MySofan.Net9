@@ -1,6 +1,6 @@
-using Ore.Hub;
+using Sofan.Hub;
 
-namespace Ore.Lib.RazorPages
+namespace Site.lib.RazorPages
 {
     public abstract class HubRazorPage<TModel> : Microsoft.AspNetCore.Mvc.Razor.RazorPage<TModel>
     {

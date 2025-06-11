@@ -1,4 +1,4 @@
-namespace Ore.Lib.ViewModels;
+namespace Site.lib.Services;
 
 public partial class VmActivity
 {

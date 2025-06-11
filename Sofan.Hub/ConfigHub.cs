@@ -17,6 +17,7 @@ public abstract class ConfigHub
     public static string Password { get; set; } = "Ali@12356780";
     private static string DataBase { get; set; } = "MySofDb.V01";
     private static string ServerName { get; set; } = "localhost";
+    public static string GuidPattern => "00000000-1111-1111-1001";
     public static string Cs { get;} = $"server={ServerName};user={UserName};password={Password};database={DataBase}";
     public static string DockerCs { get; } = $"server=mdb;port=3306;database={DataBase};user={UserName};password={Password};";
     public static int ExpirationHours { get; } = 720;

@@ -16,8 +16,9 @@ public class SofanDbContext : IdentityDbContext<IdentityUser, IdentityRole, stri
     public DbSet<Activity> Activity { get; set; }
     public DbSet<SofAttribute> SofAttribute { get; set; }
     public DbSet<Culture> Culture { get; set; }
-    public DbSet<Entry> Entry { get; set; }
+    public DbSet<Entry> Entries { get; set; }
     public DbSet<Address> Address { get; set; }
+    public DbSet<Activity> Activities { get; set; }
     public DbSet<Localize> Localize { get; set; }
     public DbSet<LocAttributes> LocAttributes { get; set; }
     public DbSet<LocEntry> LocEntry { get; set; }

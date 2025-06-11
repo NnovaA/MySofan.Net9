@@ -1,8 +1,10 @@
-﻿namespace Site.Lib.Data;
+﻿using Microsoft.AspNetCore.Identity;
 
-public class SofUser
+namespace Site.Lib.Data;
+
+public class SofUser: IdentityUser
 {
-    public string CulturId { get; set; }
+    public string CultureId { get; set; }
     public string FullName { get; set; }
     public string JobTitle { get; set; }
     public string Token { get; set; }

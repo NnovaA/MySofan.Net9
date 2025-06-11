@@ -8,7 +8,7 @@ public class LocAttributes
     public long AttributeId { get; set; }
     [Column(Order = 2)] 
     public string CultureId { get; set; }
-    public byte status { get; set; }
+    public byte Status { get; set; }
     public string Name { get; set; }
     public string Misc001 { get; set; }
     public string Misc002 { get; set; }

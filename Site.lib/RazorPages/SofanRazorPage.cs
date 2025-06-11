@@ -1,14 +1,17 @@
 ﻿using Microsoft.AspNetCore.Html;
 using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.AspNetCore.Mvc.Razor.Internal;
+using Site.lib.Services;
+using Site.lib.ViewModels;
+using Sofan.Hub;
 
 namespace Site.lib.RazorPages
 {
-    public abstract class OreRazorPage<TModel> : RazorPage<TModel>
+    public abstract class SofanRazorPage<TModel> : RazorPage<TModel>
     {
-        [RazorInject] public IOreLoc OreLoc { get; set; }
-        [RazorInject] public IOreWidgets OreWidgets { get; set; }
-        [RazorInject] public IOreAuth OreAuth { get; set; }
+        [RazorInject] public ISofLoc OreLoc { get; set; }
+        [RazorInject] public ISofWidgets OreWidgets { get; set; }
+        [RazorInject] public ISofAuth OreAuth { get; set; }
         
         protected delegate HtmlString Localizer(string resourceKey, params object[] args);
 

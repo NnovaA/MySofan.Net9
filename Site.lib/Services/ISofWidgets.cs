@@ -1,9 +1,9 @@
 namespace Site.lib.Services;
 
-public interface IOreWidgets
+public interface ISofWidgets
 {
 }
 
-public class OreWidgets() : IOreWidgets
+public class SofWidgets() : ISofWidgets
 {
 }

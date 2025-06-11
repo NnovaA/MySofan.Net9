@@ -1,30 +1,38 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Ore.Lib.Dto;
+using Site.Lib.Data;
+using Site.lib.Helpers;
+using Site.lib.Models;
+using Site.lib.ViewModels;
+using Sofan.Hub;
 
 namespace Site.lib.Services;
 
-public interface IOreAuth
+public interface ISofAuth
 {
     string UserId { get; }
-    Task<OreUser> UserById(string id);
-    Task<OreUser> CurrentUser();
+    Task<SofUser> UserById(string id);
+    Task<SofUser> CurrentUser();
     string UserToken { get; }
     string UserName { get; }
     string UserEmail { get; }
-    Task<OreUser> UserByEmail(string email);
+    Task<SofUser> UserByEmail(string email);
     string CultureId { get; }
-    string GenerateToken(OreUser user);
+    string GenerateToken(SofUser user);
     VmOrePermission CheckUserRoutePermission(string route, string userId);
     string Locale(string resourceKey);
     List<VmActivity> UserActivity(string id);
     Task<ResponseDto> CheckAdmin(string id);
     void AddRole(string roleName);
     List<VmOrePermission> ListRolePermission(string roleId);
-    OreUser CreateUser();
+    SofUser CreateUser();
     Task BlockUser(string id);
     LocEntry GetLocalizeEntry(string entryId);
     ResponseDto IsSignedIn();
@@ -33,20 +41,30 @@ public interface IOreAuth
     Task<string> UpdateUserCulture(string cultureId);
 }
 
-public class OreAuth(
-    OreDb oreDb,
+public class SofAuth(
+    SofanDbContext SofanDbContext,
     IHttpContextAccessor ctx,
     RoleManager<IdentityRole> roleManager,
-    SignInManager<OreUser> signInManager,
-    IUserStore<OreUser> userStore,
-    UserManager<OreUser> userManager
-) : IOreAuth
+    SignInManager<SofUser> signInManager,
+    IUserStore<SofUser> userStore,
+    UserManager<SofUser> userManager
+) : ISofAuth
 {
     private readonly HttpContext _ctx = ctx.HttpContext;
     private readonly ResponseDto _res=new();
     
     public string UserId => _ctx.User.Identity is { IsAuthenticated: true } ? new Guid(_ctx.User.Claims.First(c => c.Type == "Id").Value).ToString() : "";
+    Task<SofUser> ISofAuth.UserByEmail(string email)
+    {
+        throw new NotImplementedException();
+    }
+
     public string CultureId => _ctx.User.Identity is { IsAuthenticated: true } ? _ctx.User.Claims.First(c => c.Type == "CultureId").Value: "en";
+
+    Task<SofUser> ISofAuth.CurrentUser()
+    {
+        throw new NotImplementedException();
+    }
 
     public string UserToken => _ctx.User.Identity is { IsAuthenticated: true } ? _ctx.User.Claims.First(c => c.Type == "Token").Value : "";
 
@@ -59,13 +77,14 @@ public class OreAuth(
         : "";
     public async Task<string> UpdateUserCulture(string cultureId)
     {
-        var user = oreDb.Users.FirstOrDefault(c=>c.Id == UserId);
+        var user = SofanDbContext.Users.FirstOrDefault(c=>c.Id == UserId);
         if (user == null) return cultureId;
-        user.CultureId = cultureId;
-        await oreDb.SaveChangesAsync();
+        user.Id = cultureId;
+        await SofanDbContext.SaveChangesAsync();
         return cultureId;
     }
-    public string GenerateToken(OreUser user)
+
+    string ISofAuth.GenerateToken(SofUser user)
     {
         if (user.UserName == null) return "";
         if (user.Email == null) return "";
@@ -105,11 +124,16 @@ public class OreAuth(
         return _res;
     }
 
+    public string GenerateToken(SofUser user)
+    {
+        throw new NotImplementedException();
+    }
+
     public VmOrePermission CheckUserRoutePermission(string route, string userId)
     {
-        var permission = (from ue in oreDb.UserRoles
+        var permission = (from ue in SofanDbContext.UserRoles
             where ue.UserId == userId
-            join re in oreDb.Permissions on ue.RoleId equals re.RoleId.ToString()
+            join re in SofanDbContext.Permission on ue.RoleId equals re.RoleId.ToString()
             where re.EntryName == route.ToLower()
             select new VmOrePermission
             {
@@ -144,12 +168,12 @@ public class OreAuth(
         return vm.RoleId;
     }
 
-    public string Locale(string resKey) => oreDb.Localizes
+    public string Locale(string resKey) => SofanDbContext.Localize
         .FirstOrDefault(x => x.ResKey.Trim().ToLower() == resKey.Trim().ToLower() && x.CultureId == CultureId)?.Value;
     
     public List<VmOrePermission> ListRolePermission(string roleId)
     {
-        var permissions = (from re in oreDb.Permissions
+        var permissions = (from re in SofanDbContext.Permission
             where re.RoleId.ToString() == roleId
             select new VmOrePermission
             {
@@ -168,7 +192,12 @@ public class OreAuth(
 
         return permissions;
     }
-    
+
+    SofUser ISofAuth.CreateUser()
+    {
+        throw new NotImplementedException();
+    }
+
     public async Task<List<IdentityRole>> AllRoles()
     {
         var roles = await roleManager.Roles.ToListAsync();
@@ -183,13 +212,13 @@ public class OreAuth(
     }
     public List<VmActivity> UserActivity(string id)
         {
-            var query = (from a in oreDb.Activities
+            var query = (from a in SofanDbContext.Activities
                 where a.ActToId.ToString() == id
-                join locale in oreDb.LocEntries on a.ActOnId equals locale.EntryId
+                join locale in SofanDbContext.LocEntry on a.ActOnId equals locale.EntryId
                 where locale.CultureId == CultureId
-                join uBy in oreDb.Users on a.ActById.ToString() equals uBy.Id
-                join uTo in oreDb.Users on a.ActById.ToString() equals uTo.Id
-                join action in oreDb.LocAttributes on a.ActionId equals action.AttrId
+                join uBy in SofanDbContext.Users on a.ActById.ToString() equals uBy.Id
+                join uTo in SofanDbContext.Users on a.ActById.ToString() equals uTo.Id
+                join action in SofanDbContext.LocAttributes on a.ActionId equals action.AttrId
                 where action.CultureId == "en"
                 select new VmActivity()
                 {
@@ -231,71 +260,77 @@ public class OreAuth(
         _res.IsSuccess = isInRole;
         return _res;
     }
-    public OreUser CreateUser()
+    public SofUser CreateUser()
     {
         try
         {
-            return Activator.CreateInstance<OreUser>();
+            return Activator.CreateInstance<SofUser>();
         }
         catch
         {
-            throw new InvalidOperationException($"Can't create an instance of '{nameof(OreUser)}'. " +
-                                                $"Ensure that '{nameof(OreUser)}' is not an abstract class and has a parameterless constructor, or alternatively " +
+            throw new InvalidOperationException($"Can't create an instance of '{nameof(SofUser)}'. " +
+                                                $"Ensure that '{nameof(SofUser)}' is not an abstract class and has a parameterless constructor, or alternatively " +
                                                 $"override the register page in /Areas/Identity/Pages/Account/Register.cshtml");
         }
     }
-    public async Task<OreUser> UserByEmail(string email)
+    public async Task<SofUser> UserByEmail(string email)
     {
-        //UserStore<OreUser> UserStore = new(OreDb);
+        //UserStore<OreUser> UserStore = new(SofanDbContext);
         var user = await userManager.FindByEmailAsync(email);
         return user;
     }
     public async Task BlockUser(string id)
     {
-        //UserStore<OreUser> UserStore = new(OreDb);
+        //UserStore<OreUser> UserStore = new(SofanDbContext);
         var user = await userManager.FindByIdAsync(id);
         //String hashedNewPassword = _userManager.PasswordHasher.HashPassword(user, "Xyz@123#678@Ayham");
         //await UserStore.SetPasswordHashAsync(user, hashedNewPassword);
         var isLockedOut = user is { LockoutEnabled: false };
         if (user != null) user.LockoutEnabled = isLockedOut;
-        await oreDb.SaveChangesAsync();
+        await SofanDbContext.SaveChangesAsync();
     }
     public async Task<bool> ResetPassword(VmPass vm)
     {
-        UserStore store = new(oreDb);
+        UserStore store = new(SofanDbContext);
         var user = await userManager.FindByIdAsync(vm.Id);
         if (user == null) return false;
         var hashedNewPassword = userManager.PasswordHasher.HashPassword(user, vm.Password);
         await store.SetPasswordHashAsync(user, hashedNewPassword);
-        await oreDb.SaveChangesAsync();
+        await SofanDbContext.SaveChangesAsync();
         return true;
     }
     public LocEntry GetLocalizeEntry(string entryId)
     {
         //Lx = TranslateString("Untitled");
-        var lx = oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == CultureId);
-        lx ??= oreDb.LocEntries.FirstOrDefault(
+        var lx = SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == CultureId);
+        lx ??= SofanDbContext.LocEntry.FirstOrDefault(
             c => c.EntryId.ToString() == entryId && c.CultureId == "en");
         return lx;
     }
 
-    public async Task<OreUser> UserById(string id)
+    public async Task<SofUser> UserById(string id)
     {
         return await Task.FromResult(userManager.FindByIdAsync(id).Result);
     }
-    public async Task<OreUser> CurrentUser()
+
+    Task<SofUser> ISofAuth.UserById(string id)
+    {
+        throw new NotImplementedException();
+    }
+
+    public async Task<SofUser> CurrentUser()
     {
         return await Task.FromResult(userManager.FindByIdAsync(UserId).Result);
     }
     public async Task<bool> ChangePassword(VmPass vm)
     {
-        UserStore<OreUser> store = new(oreDb);
+        UserStore<SofUser> store = new(SofanDbContext);
         var input=vm.Email;
         var user=await userManager.Users.Where(c=>c.PhoneNumber==input || c.Email==input || c.Id==input).FirstOrDefaultAsync();
         if (user?.PasswordHash == null) return false;
         var hashedNewPassword = userManager.PasswordHasher.HashPassword(user, vm.Password);
         await store.SetPasswordHashAsync(user, hashedNewPassword);
-        await oreDb.SaveChangesAsync();
+        await SofanDbContext.SaveChangesAsync();
         return true;
     }
 }

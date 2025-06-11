@@ -1,6 +1,6 @@
-using Ore.Hub;
+using Sofan.Hub;
 
-namespace Ore.Lib.Ore.Seed;
+namespace Site.lib.Sofan.Seed;
 
 public static class GuidHelper
 {

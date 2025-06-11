@@ -3,10 +3,15 @@ using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Site.Lib.Data;
+using Site.lib.Models;
+using Site.lib.Sofan.Seed;
+using Site.lib.ViewModels;
+using Sofan.Hub;
 
 namespace Site.lib.Services;
 
-public interface IOreLoc
+public interface ISofLoc
 {
     string UserId { get; }
     string SiteName { get; }
@@ -15,9 +20,9 @@ public interface IOreLoc
     string DefaultCulture { get; }
     void ChangeCulture(string cultureId);
     List<ViewAttribute> ListParent(long parentId);
-    List<OreCulture> ListCultures();
-    LocAttribute GetLocAttribute(long attrId);
-    LocAttribute GetLocalizeAttribute(long attrId, string langId);
+    List<Culture> ListCultures();
+    LocAttributes GetLocAttribute(long attrId);
+    LocAttributes GetLocalizeAttribute(long attrId, string langId);
     LocEntry GetLocalizeEntry(string entryId);
     string Locale(string resKey);
     ViewAttribute AttributeById(long id);
@@ -28,16 +33,16 @@ public interface IOreLoc
     bool DeleteAttribute(long id);
     Task<bool> DeleteEntry(string id);
     Task<bool> ReorderEntry(string id, string masterId, int order);
-    Task DeleteRangeEntry(List<OreEntry> ids);
-    List<OreEntry> EntryTypedSlaves(string id, long slaveTypeId);
-    List<OreEntry> EntryTypedMasters(string id, long masterTypeId);
+    Task DeleteRangeEntry(List<Entry> ids);
+    List<Entry> EntryTypedSlaves(string id, long slaveTypeId);
+    List<Entry> EntryTypedMasters(string id, long masterTypeId);
     Task<long> PostAttribute(ViewAttribute vm);
     long GetMaxAttributeOrder(long parentId);
     long SetAttrMaxId(long parentId);
     Guid PostEntry(long attrId, byte status = 1, int order = 1);
     void PostRelated(Guid masterId, Guid slaveId, byte status = 1, int order = 0);
 
-    void PostLocale(Guid entryId,
+    void PostLocale(long entryId,
         string cultureId, string title, long propDate = 0, string subTitle = "", string shortDesc = "",
         string prop01 = "",
         string prop02 = "", string prop03 = "", string propUrl = "", string imageUrl = "", string content = "",
@@ -75,9 +80,9 @@ public interface IOreLoc
     bool IsValidJson(string jsonString);
 }
 
-public class OreLoc(
-    OreDb oreDb,
-    IHttpContextAccessor xtx) : IOreLoc
+public class SofLoc(
+    SofanDbContext SofanDbContext,
+    IHttpContextAccessor xtx) : ISofLoc
 {
     private readonly HttpContext _ctx = xtx.HttpContext;
     public string DefaultCulture => "en";
@@ -88,7 +93,7 @@ public class OreLoc(
         ? new Guid(_ctx.User.Claims.First(c => c.Type == "Id" | c.Type == "NameIdentifier").Value).ToString()
         : "";
 
-    public string SiteName => ConfigHub.AppName;
+    public string SiteName => ConfigHub.SiteName;
 
     public string CultureId
     {
@@ -153,7 +158,7 @@ public class OreLoc(
 
     public List<VmCulture> AdminListCultures()
     {
-        var query = (from c in oreDb.Cultures
+        var query = (from c in SofanDbContext.Culture
             select new VmCulture
             {
                 CultureId = c.CultureId,
@@ -169,7 +174,7 @@ public class OreLoc(
 
     public VmCulture GetCultureById(string id)
     {
-        var query = (from c in oreDb.Cultures
+        var query = (from c in SofanDbContext.Culture
             where c.CultureId == id
             orderby c.Order
             select new VmCulture
@@ -185,19 +190,29 @@ public class OreLoc(
         return query;
     }
 
-    public List<OreCulture> ListCultures()
+    public List<Culture> ListCultures()
     {
-        return oreDb.Cultures.Where(c => c.IsPublic == true).OrderBy(c => c.Order).ToList();
+        return SofanDbContext.Culture.Where(c => c.IsPublic == true).OrderBy(c => c.Order).ToList();
+    }
+
+    LocAttributes ISofLoc.GetLocAttribute(long attrId)
+    {
+        throw new NotImplementedException();
+    }
+
+    LocAttributes ISofLoc.GetLocalizeAttribute(long attrId, string langId)
+    {
+        throw new NotImplementedException();
     }
 
     public List<ViewAttribute> ListParent(long parentId)
     {
-        var query = (from lo in oreDb.LocAttributes
+        var query = (from lo in SofanDbContext.LocAttributes
             where lo.Attribute.ParentId == parentId
             where lo.CultureId == CultureId
             select new ViewAttribute
             {
-                AttrId = lo.AttrId,
+                AttributeId = lo.AttributeId,
                 Name = lo.Name,
                 Misc01 = lo.Misc001,
                 Misc02 = lo.Misc002,
@@ -207,8 +222,8 @@ public class OreLoc(
             }).ToList();
         foreach (var cat in query)
         {
-            var locs = (from o in oreDb.Cultures
-                let Lo = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == cat.AttrId && c.CultureId == o.CultureId)
+            var locs = (from o in SofanDbContext.Culture
+                let Lo = SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == cat.AttributeId && c.CultureId == o.CultureId)
                 where Lo != null
                 select o.CultureId).ToList();
 
@@ -218,56 +233,66 @@ public class OreLoc(
         return query;
     }
 
-    public string Locale(string resKey) => oreDb.Localizes
+    List<Culture> ISofLoc.ListCultures()
+    {
+        throw new NotImplementedException();
+    }
+
+    public string Locale(string resKey) => SofanDbContext.Localize
         .FirstOrDefault(x => x.ResKey.Trim().ToLower() == resKey.Trim().ToLower() && x.CultureId == CultureId)?.Value;
 
-    public LocAttribute GetLocAttribute(long attrId)
+    public LocAttributes GetLocAttribute(long attrId)
     {
-        var ao = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == attrId && c.CultureId == CultureId);
-        ao ??= oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == attrId && c.CultureId == DefaultCulture);
+        var ao = SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == attrId && c.CultureId == CultureId);
+        ao ??= SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == attrId && c.CultureId == DefaultCulture);
         return ao;
     }
 
-    public LocAttribute GetLocalizeAttribute(long attrId, string langId)
+    public LocAttributes GetLocalizeAttribute(long attrId, string langId)
     {
-        var ao = oreDb.LocAttributes.Include(c => c.Attribute)
-            .FirstOrDefault(c => c.AttrId == attrId && c.CultureId == langId);
-        ao ??= oreDb.LocAttributes.Include(c => c.Attribute)
-            .FirstOrDefault(c => c.AttrId == attrId && c.CultureId == DefaultCulture);
+        var ao = SofanDbContext.LocAttributes.Include(c => c.Attribute)
+            .FirstOrDefault(c => c.AttributeId == attrId && c.CultureId == langId);
+        ao ??= SofanDbContext.LocAttributes.Include(c => c.Attribute)
+            .FirstOrDefault(c => c.AttributeId == attrId && c.CultureId == DefaultCulture);
         return ao;
     }
 
     public LocEntry GetLocalizeEntry(string entryId)
     {
         //Lx = TranslateString("Untitled");
-        var lx = oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == CultureId);
-        lx ??= oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
+        var lx = SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == CultureId);
+        lx ??= SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
         return lx;
     }
 
     public LocEntry GetLocalizeEntryWithCulture(string entryId, string langId)
     {
         //Lx = TranslateString("Untitled");
-        var lx = oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == langId);
-        lx ??= oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
+        var lx = SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == langId);
+        lx ??= SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
         return lx;
     }
 
     public long SetAttrMaxId(long parentId)
     {
-        long count = oreDb.Attributes.Count();
+        long count = SofanDbContext.SofAttribute.Count();
         if (count == 0)
         {
             return 1;
         }
 
-        count = oreDb.Attributes.Count(c => c.ParentId == parentId);
+        count = SofanDbContext.SofAttribute.Count(c => c.ParentId == parentId);
         if (count == 0)
         {
             return parentId * 100 + 1;
         }
 
-        return oreDb.Attributes.Where(c => c.ParentId == parentId).Max(c => c.AttrId) + 1;
+        return SofanDbContext.SofAttribute.Where(c => c.ParentId == parentId).Max(c => c.AttributeId) + 1;
+    }
+
+    List<Entry> ISofLoc.EntryTypedMasters(string id, long masterTypeId)
+    {
+        throw new NotImplementedException();
     }
 
     public async Task<long> PostAttribute(ViewAttribute vm)
@@ -281,20 +306,20 @@ public class OreLoc(
                 langId = vm.CultureId;
             }
 
-            if (vm.AttrId == 0)
+            if (vm.AttributeId == 0)
             {
-                var attribute = new OreAttribute
+                var attribute = new SofAttribute
                 {
-                    AttrId = id,
+                    AttributeId = id,
                     ParentId = vm.ParentId,
                     Status = vm.Status,
                     Order = vm.Order,
                 };
-                oreDb.Attributes.Add(attribute);
-                oreDb.Entry(attribute).State = EntityState.Added;
-                var locale = new LocAttribute
+                SofanDbContext.SofAttribute.Add(attribute);
+                SofanDbContext.Entry(attribute).State = EntityState.Added;
+                var locale = new LocAttributes
                 {
-                    AttrId = id,
+                    AttributeId = id,
                     CultureId = langId,
                     Name = vm.Name,
                     Misc001 = vm.Misc01,
@@ -302,16 +327,16 @@ public class OreLoc(
                     Misc003 = vm.Misc03,
                     Status = vm.Status
                 };
-                oreDb.Entry(locale).State = EntityState.Added;
+                SofanDbContext.Entry(locale).State = EntityState.Added;
             }
             else
             {
-                id = vm.AttrId;
-                var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
-                var l = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == langId);
+                id = vm.AttributeId;
+                var a = SofanDbContext.SofAttribute.FirstOrDefault(c => c.AttributeId == id);
+                var l = SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == id && c.CultureId == langId);
                 if (a != null)
                 {
-                    a.AttrId = id;
+                    a.AttributeId = id;
                     a.Status = vm.Status;
                     a.Order = vm.Order;
                     if (vm.ParentId != 0)
@@ -330,9 +355,9 @@ public class OreLoc(
                 }
                 else
                 {
-                    var locale = new LocAttribute
+                    var locale = new LocAttributes
                     {
-                        AttrId = id,
+                        AttributeId = id,
                         CultureId = langId,
                         Name = vm.Name,
                         Misc001 = vm.Misc01,
@@ -340,11 +365,11 @@ public class OreLoc(
                         Misc003 = vm.Misc03,
                         Status = vm.Status
                     };
-                    oreDb.LocAttributes.Add(locale);
+                    SofanDbContext.LocAttributes.Add(locale);
                 }
             }
 
-            await oreDb.SaveChangesAsync();
+            await SofanDbContext.SaveChangesAsync();
             return id;
         }
         catch (Exception)
@@ -355,17 +380,17 @@ public class OreLoc(
 
     public ViewAttribute AttributeById(long id)
     {
-        var query = (from at in oreDb.Attributes
-            where at.AttrId == id
+        var query = (from at in SofanDbContext.SofAttribute
+            where at.AttributeId == id
             select new ViewAttribute
             {
-                AttrId = at.AttrId,
+                AttributeId = at.AttributeId,
                 ParentId = at.ParentId,
                 Order = at.Order,
                 Status = at.Status,
             }).FirstOrDefault();
         if (query == null) return null;
-        var lo = GetLocalizeAttribute(query.AttrId, CultureId);
+        var lo = GetLocalizeAttribute(query.AttributeId, CultureId);
         var pa = GetLocalizeAttribute(query.ParentId, CultureId);
         query.Name = lo.Name;
         query.ParentName = pa.Name;
@@ -377,17 +402,17 @@ public class OreLoc(
 
     public ViewAttribute AttributeByIdByCultureId(long id, string langId)
     {
-        var q = (from at in oreDb.Attributes
-            where at.AttrId == id
+        var q = (from at in SofanDbContext.SofAttribute
+            where at.AttributeId == id
             select new ViewAttribute
             {
-                AttrId = at.AttrId,
+                AttributeId = at.AttributeId,
                 ParentId = at.ParentId,
                 Order = at.Order,
                 Status = at.Status,
             }).FirstOrDefault();
-        var lo = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == langId);
-        lo ??= oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == "en");
+        var lo = SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == id && c.CultureId == langId);
+        lo ??= SofanDbContext.LocAttributes.FirstOrDefault(c => c.AttributeId == id && c.CultureId == "en");
         if (lo == null) return null;
         q!.Name = lo.Name;
         q.Misc01 = lo.Misc001;
@@ -398,58 +423,68 @@ public class OreLoc(
 
     public long GetMaxAttributeOrder(long parentId)
     {
-        var query = oreDb.Attributes.Where(c => c.ParentId == parentId).Select(c => (int?)c.Order).Max() + 1 ??
+        var query = SofanDbContext.SofAttribute.Where(c => c.ParentId == parentId).Select(c => (int?)c.Order).Max() + 1 ??
                     1;
         return query;
     }
 
     public bool DeleteAttribute(long id)
     {
-        using (oreDb)
+        using (SofanDbContext)
         {
             if (id! <= 0) return false;
-            var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
-            if (a != null) oreDb.Attributes.Remove(a);
-            return oreDb.SaveChanges() > 0;
+            var a = SofanDbContext.SofAttribute.FirstOrDefault(c => c.AttributeId == id);
+            if (a != null) SofanDbContext.SofAttribute.Remove(a);
+            return SofanDbContext.SaveChanges() > 0;
         }
     }
 
-    public async Task DeleteRangeEntry(List<OreEntry> ids)
+    async Task ISofLoc.DeleteRangeEntry(List<Entry> ids)
     {
-        oreDb.Entries.RemoveRange(ids);
-        await oreDb.SaveChangesAsync();
+        SofanDbContext.Entries.RemoveRange(ids);
+        await SofanDbContext.SaveChangesAsync();
     }
 
-    public List<OreEntry> EntryTypedSlaves(string id, long slaveTypeId)
+    public Task DeleteRangeEntry(List<Entry> ids)
     {
-        var query = (from re in oreDb.RelatedEntries
+        throw new NotImplementedException();
+    }
+
+    List<Entry> ISofLoc.EntryTypedSlaves(string id, long slaveTypeId)
+    {
+        throw new NotImplementedException();
+    }
+
+    public List<Entry> EntryTypedSlaves(string id, long slaveTypeId)
+    {
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == slaveTypeId
+            where re.SlaveEntry.AttributeId == slaveTypeId
             select re.SlaveEntry).ToList();
         return query;
     }
 
-    public List<OreEntry> EntryTypedMasters(string id, long masterTypeId)
+    public List<Entry> EntryTypedMasters(string id, long masterTypeId)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.SlaveId.ToString() == id
-            where re.MasterEntry.AttrId == masterTypeId
+            where re.MasterEntry.AttributeId == masterTypeId
             select re.MasterEntry).ToList();
         return query;
     }
 
     public bool ToggleAttribute(long id)
     {
-        using (oreDb)
+        using (SofanDbContext)
         {
-            var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+            var a = SofanDbContext.SofAttribute.FirstOrDefault(c => c.AttributeId == id);
             if (a == null) return false;
             var active = a.Status;
             {
                 active = active == 0 ? (byte)1 : (byte)0;
                 a.Status = active;
-                oreDb.LocAttributes.Where(c => c.AttrId == id).ToList().ForEach(c => c.Status = active);
-                if (oreDb.SaveChanges() > 0)
+                SofanDbContext.LocAttributes.Where(c => c.AttributeId == id).ToList().ForEach(c => c.Status = active);
+                if (SofanDbContext.SaveChanges() > 0)
                 {
                     return true;
                 }
@@ -461,31 +496,31 @@ public class OreLoc(
 
     public bool ReOrderAttribute(long id, byte value)
     {
-        var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+        var a = SofanDbContext.SofAttribute.FirstOrDefault(c => c.AttributeId == id);
         if (a == null) return false;
         a.Order = value;
-        var res = oreDb.SaveChanges() > 0;
+        var res = SofanDbContext.SaveChanges() > 0;
         return res;
     }
 
     public Guid PostEntry(long attrId, byte status = 1, int order = 1)
     {
         var entryId = Guid.NewGuid();
-        OreEntry cIe = new()
+        Entry cIe = new()
         {
             EntryId = entryId,
-            AttrId = attrId,
+            AttributeId = attrId,
             AddedBy = string.IsNullOrEmpty(UserId) ? entryId : Guid.Parse(UserId),
             DateAdded = DateTime.UtcNow.Ticks,
             Order = order,
             Status = status
         };
-        oreDb.Entries.Add(cIe);
-        oreDb.Entry(cIe).State = EntityState.Added;
+        SofanDbContext.Entries.Add(cIe);
+        SofanDbContext.Entry(cIe).State = EntityState.Added;
         return entryId;
     }
 
-    public void PostLocale(Guid entryId,
+    public void PostLocale(long entryId,
         string cultureId,
         string title,
         long propDate = 0,
@@ -499,7 +534,7 @@ public class OreLoc(
         string content = "",
         byte status = 0)
     {
-        var loc = oreDb.LocEntries.Include(x => x.Entry)
+        var loc = SofanDbContext.LocEntry.Include(x => x.Entry)
             .FirstOrDefault(c => c.EntryId == entryId && c.CultureId == cultureId);
         if (loc == null)
         {
@@ -519,8 +554,8 @@ public class OreLoc(
                 ImageUrl = imageUrl,
                 Status = status
             };
-            oreDb.LocEntries.Add(cLe);
-            oreDb.Entry(cLe).State = EntityState.Added;
+            SofanDbContext.LocEntry.Add(cLe);
+            SofanDbContext.Entry(cLe).State = EntityState.Added;
         }
         else
         {
@@ -574,13 +609,13 @@ public class OreLoc(
                 loc.Content = content;
             }
 
-            oreDb.Entry(loc).State = EntityState.Modified;
+            SofanDbContext.Entry(loc).State = EntityState.Modified;
         }
     }
 
     public void PostRelated(Guid masterId, Guid slaveId, byte status = 1, int order = 0)
     {
-        if (oreDb.RelatedEntries.Any(c => c.MasterId == masterId & c.SlaveId == slaveId)) return;
+        if (SofanDbContext.RelatedEntries.Any(c => c.MasterId == masterId & c.SlaveId == slaveId)) return;
         var coRe = new RelatedEntries
         {
             MasterId = masterId,
@@ -588,13 +623,13 @@ public class OreLoc(
             Status = status,
             Order = order
         };
-        oreDb.RelatedEntries.Add(coRe);
-        oreDb.Entry(coRe).State = EntityState.Added;
+        SofanDbContext.RelatedEntries.Add(coRe);
+        SofanDbContext.Entry(coRe).State = EntityState.Added;
     }
 
     public void AddAction(Guid actOn, long actId)
     {
-        oreDb.Activities.Add(new OreActivity
+        SofanDbContext.Activities.Add(new Activity
         {
             ActById = Guid.Parse(UserId),
             ActOnId = actOn,
@@ -606,15 +641,15 @@ public class OreLoc(
 
     public VmEntry GetEntry(string id, string langId)
     {
-        var query = (from e in oreDb.Entries
+        var query = (from e in SofanDbContext.Entries
             where e.EntryId.ToString() == id
-            join lo in oreDb.LocEntries on e.EntryId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on e.EntryId equals lo.EntryId
             where lo.CultureId == langId
             select new VmEntry
             {
                 Id = id,
                 CultureId = langId,
-                TypeId = e.AttrId,
+                TypeId = e.AttributeId,
                 Title = !string.IsNullOrEmpty(lo.Title) ? lo.Title : "",
                 SubTitle = !string.IsNullOrEmpty(lo.SubTitle) ? lo.SubTitle : "",
                 ShortDesc = !string.IsNullOrEmpty(lo.ShortDesc) ? lo.ShortDesc : "",
@@ -654,11 +689,11 @@ public class OreLoc(
 
     public List<VmEntry> ListPageSections(string id, string langId)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedEntryTypes.Section.PropId ||
-                  re.SlaveEntry.AttrId == SeedEntryTypes.Slider.PropId
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where re.SlaveEntry.AttributeId == SeedEntryTypes.Section.PropId ||
+                  re.SlaveEntry.AttributeId == SeedEntryTypes.Slider.PropId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == langId
             orderby lo.Entry.Order
             select new VmEntry
@@ -719,13 +754,13 @@ public class OreLoc(
 
     public List<ViewProp002> ListChilds(long id)
     {
-        var query = (from at in oreDb.Attributes
+        var query = (from at in SofanDbContext.SofAttribute
             where at.ParentId == id
-            where at.AttrId != 0
+            where at.AttributeId != 0
             orderby at.Order
             select new ViewProp002
             {
-                Id = at.AttrId,
+                Id = at.AttributeId,
                 Priority = at.Order,
                 Status = at.Status,
             }).ToList();
@@ -742,11 +777,11 @@ public class OreLoc(
 
     public List<VmImage> EntryImages(string id)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedTypes.Image.PropId
+            where re.SlaveEntry.AttributeId == SeedTypes.Image.PropId
             where re.Status == 1
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == "en"
             select new VmImage
             {
@@ -767,13 +802,13 @@ public class OreLoc(
         return secs;
     }
 
-    public List<VmAddress> EntryAddresses(string id) => (from re in oreDb.RelatedEntries
+    public List<VmAddress> EntryAddresses(string id) => (from re in SofanDbContext.RelatedEntries
         where re.MasterId.ToString() == id
-        where re.SlaveEntry.AttrId == SeedContact.Address.PropId
-        join li in oreDb.Addresses on re.SlaveId equals li.AddressId
-        join go in oreDb.LocAttributes on li.GovId equals go.AttrId
+        where re.SlaveEntry.AttributeId == SeedContact.Address.PropId
+        join li in SofanDbContext.Address on re.SlaveId equals li.AddressId
+        join go in SofanDbContext.LocAttributes on li.GovId equals go.AttributeId
         where go.CultureId == "en"
-        join co in oreDb.LocAttributes on li.CountryId equals co.AttrId
+        join co in SofanDbContext.LocAttributes on li.CountryId equals co.AttributeId
         where go.CultureId == "en"
         select new VmAddress
         {
@@ -794,16 +829,16 @@ public class OreLoc(
 
     public List<VmEntry> EntryPosts(string id, long typeId, string langId)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
             where re.SlaveEntry.Status != 2
-            where re.SlaveEntry.AttrId == typeId
+            where re.SlaveEntry.AttributeId == typeId
             orderby re.SlaveEntry.Order
             select new VmEntry
             {
                 MasterId = id,
                 Id = re.SlaveId.ToString(),
-                TypeId = re.SlaveEntry.AttrId,
+                TypeId = re.SlaveEntry.AttributeId,
                 Status = re.SlaveEntry.Status,
                 Order = re.SlaveEntry.Order,
                 //PostImage=JsonConvert.DeserializeObject<PostImages>(lo.ImageUrl)
@@ -824,7 +859,7 @@ public class OreLoc(
             List<string> locs = [];
             locs.AddRange(from o in ListCultures()
                 let locale =
-                    oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
+                    SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
                 where locale != null
                 select o.CultureId);
             item.Locs = locs;
@@ -846,17 +881,17 @@ public class OreLoc(
 
     public List<VmEntry> CountedEntryPosts(string id, long typeId, string langId, int count)
     {
-        var query = oreDb.RelatedEntries
+        var query = SofanDbContext.RelatedEntries
             .Where(re => re.MasterId.ToString() == id)
             .Where(re => re.SlaveEntry.Status == 1)
-            .Where(re => re.SlaveEntry.AttrId == typeId)
+            .Where(re => re.SlaveEntry.AttributeId == typeId)
             .OrderBy(re => re.Order)
             .Take(count)
             .Select(re => new VmEntry
             {
                 MasterId = id,
                 Id = re.SlaveId.ToString(),
-                TypeId = re.SlaveEntry.AttrId,
+                TypeId = re.SlaveEntry.AttributeId,
                 Status = re.SlaveEntry.Status,
                 Order = re.Order,
             })
@@ -881,7 +916,7 @@ public class OreLoc(
             List<string> locs = [];
             locs.AddRange(from o in ListCultures()
                 let locale =
-                    oreDb.LocEntries.FirstOrDefault(c =>
+                    SofanDbContext.LocEntry.FirstOrDefault(c =>
                         c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
                 where locale != null
                 select o.CultureId);
@@ -899,11 +934,11 @@ public class OreLoc(
 
     public List<VmImage> GalleryImages(string id)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedTypes.Image.PropId
+            where re.SlaveEntry.AttributeId == SeedTypes.Image.PropId
             where re.Status == 1
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == "en"
             select new VmImage
             {
@@ -916,11 +951,11 @@ public class OreLoc(
 
     public List<VmImage> EntryFiles(string id)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedTypes.File.PropId
+            where re.SlaveEntry.AttributeId == SeedTypes.File.PropId
             where re.Status == 1
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == "en"
             select new VmImage
             {
@@ -933,11 +968,11 @@ public class OreLoc(
 
     public List<VmVideo> EntryVideos(string id, string langId)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
             where re.SlaveEntry.Status != 2
-            where re.SlaveEntry.AttrId == SeedTypes.Video.PropId
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where re.SlaveEntry.AttributeId == SeedTypes.Video.PropId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == langId
             orderby re.Order
             select new VmVideo
@@ -956,7 +991,7 @@ public class OreLoc(
         {
             List<string> locs = [];
             locs.AddRange(from o in ListCultures()
-                let Lo = oreDb.LocEntries.FirstOrDefault(c =>
+                let Lo = SofanDbContext.LocEntry.FirstOrDefault(c =>
                     c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
                 where Lo != null
                 select o.CultureId);
@@ -985,7 +1020,7 @@ public class OreLoc(
     }
     public VmVideoGallery VideoGallery(string id)
     {
-        var query = (from lo in oreDb.LocEntries
+        var query = (from lo in SofanDbContext.LocEntry
             where lo.CultureId == CultureId
             where lo.EntryId.ToString() == id
             select new VmVideoGallery
@@ -1005,11 +1040,11 @@ public class OreLoc(
 
     public List<VmVideo> GalleryVideos(string id)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedTypes.Video.PropId
+            where re.SlaveEntry.AttributeId == SeedTypes.Video.PropId
             where re.Status == 1
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == "en"
             select new VmVideo
             {
@@ -1023,7 +1058,7 @@ public class OreLoc(
 
     public VmPhotoGallery PhotoGallery(string id)
     {
-        var query = (from lo in oreDb.LocEntries
+        var query = (from lo in SofanDbContext.LocEntry
             where lo.CultureId == CultureId
             where lo.EntryId.ToString() == id
             select new VmPhotoGallery
@@ -1045,10 +1080,10 @@ public class OreLoc(
 
     public List<VmVideoGallery> EntryVideoGalleries(string id)
     {
-        var query = (from re in oreDb.RelatedEntries
+        var query = (from re in SofanDbContext.RelatedEntries
             where re.MasterId.ToString() == id
-            where re.SlaveEntry.AttrId == SeedTypes.PlayList.PropId
-            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where re.SlaveEntry.AttributeId == SeedTypes.PlayList.PropId
+            join lo in SofanDbContext.LocEntry on re.SlaveId equals lo.EntryId
             where lo.CultureId == CultureId
             select new VmVideoGallery
             {
@@ -1066,7 +1101,7 @@ public class OreLoc(
             List<string> locs = [];
             locs.AddRange(from o in ListCultures()
                 let Lo =
-                    oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == I.Id && c.CultureId == o.CultureId)
+                    SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId.ToString() == I.Id && c.CultureId == o.CultureId)
                 where Lo != null
                 select o.CultureId);
             I.Locs = locs;
@@ -1081,7 +1116,7 @@ public class OreLoc(
         if (vm.LinkId == "0")
         {
             linkId = PostEntry(vm.TypeId);
-            oreDb.LocEntries.Add(new LocEntry()
+            SofanDbContext.LocEntry.Add(new LocEntry()
             {
                 EntryId = linkId,
                 CultureId = "en",
@@ -1095,7 +1130,7 @@ public class OreLoc(
         else
         {
             linkId = Guid.Parse(vm.LinkId);
-            var link = oreDb.LocEntries.FirstOrDefault(c => c.EntryId == linkId && c.CultureId == "en");
+            var link = SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId == linkId && c.CultureId == "en");
             if (link != null)
             {
                 link.PropUrl = vm.Url;
@@ -1104,7 +1139,7 @@ public class OreLoc(
             }
             else
             {
-                oreDb.LocEntries.Add(new LocEntry()
+                SofanDbContext.LocEntry.Add(new LocEntry()
                 {
                     EntryId = linkId,
                     CultureId = "en",
@@ -1119,13 +1154,13 @@ public class OreLoc(
         return linkId;
     }
 
-    public List<VmSiteLink> EntryLinks(string id) => (from re in oreDb.RelatedEntries
+    public List<VmSiteLink> EntryLinks(string id) => (from re in SofanDbContext.RelatedEntries
         where re.MasterId.ToString() == id
         where re.SlaveEntry.Status == 5
-        where re.SlaveEntry.AttrId != 40102
-        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where re.SlaveEntry.AttributeId != 40102
+        join li in SofanDbContext.LocEntry on re.SlaveId equals li.EntryId
         where li.CultureId == "en"
-        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        join lo in SofanDbContext.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
         where lo.CultureId == "en"
         select new VmSiteLink
         {
@@ -1137,13 +1172,13 @@ public class OreLoc(
             Status = re.MasterEntry.Status
         }).ToList();
 
-    public List<VmSiteLink> EntryEmails(string id) => (from re in oreDb.RelatedEntries
+    public List<VmSiteLink> EntryEmails(string id) => (from re in SofanDbContext.RelatedEntries
         where re.MasterId.ToString() == id
         where re.SlaveEntry.Status == 5
-        where re.SlaveEntry.AttrId == SeedContact.Email.PropId
-        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where re.SlaveEntry.AttributeId == SeedContact.Email.PropId
+        join li in SofanDbContext.LocEntry on re.SlaveId equals li.EntryId
         where li.CultureId == "en"
-        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        join lo in SofanDbContext.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
         where lo.CultureId == "en"
         select new VmSiteLink
         {
@@ -1155,13 +1190,13 @@ public class OreLoc(
             Status = re.MasterEntry.Status
         }).ToList();
 
-    public List<VmPhone> EntryPhones(string id) => (from re in oreDb.RelatedEntries
+    public List<VmPhone> EntryPhones(string id) => (from re in SofanDbContext.RelatedEntries
         where re.MasterId.ToString() == id
         where re.SlaveEntry.Status == 5
-        where re.SlaveEntry.Attribute.ParentId == 402
-        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where re.SlaveEntry.SofAttribute.ParentId == 402
+        join li in SofanDbContext.LocEntry on re.SlaveId equals li.EntryId
         where li.CultureId == "en"
-        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        join lo in SofanDbContext.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
         where lo.CultureId == "en"
         select new VmPhone
         {
@@ -1179,7 +1214,7 @@ public class OreLoc(
         if (vm.Id == "0")
         {
             phoneId = PostEntry(SeedContact.Phone.PropId);
-            oreDb.LocEntries.Add(new LocEntry()
+            SofanDbContext.LocEntry.Add(new LocEntry()
             {
                 EntryId = phoneId,
                 CultureId = "en",
@@ -1191,10 +1226,10 @@ public class OreLoc(
         else
         {
             phoneId = Guid.Parse(vm.Id);
-            var phone = oreDb.LocEntries.FirstOrDefault(c => c.EntryId == phoneId & c.CultureId == "en");
+            var phone = SofanDbContext.LocEntry.FirstOrDefault(c => c.EntryId == phoneId & c.CultureId == "en");
             if (phone == null)
             {
-                oreDb.LocEntries.Add(new LocEntry()
+                SofanDbContext.LocEntry.Add(new LocEntry()
                 {
                     EntryId = phoneId,
                     CultureId = "en",
@@ -1207,7 +1242,7 @@ public class OreLoc(
             {
                 phone.PropUrl = vm.PhoneNo;
                 phone.Status = vm.Status;
-                var entry = oreDb.Entries.FirstOrDefault(c => c.EntryId == phoneId);
+                var entry = SofanDbContext.Entries.FirstOrDefault(c => c.EntryId == phoneId);
                 if (entry != null) entry.Status = vm.Status;
             }
         }
@@ -1225,8 +1260,8 @@ public class OreLoc(
 
     public List<VmEntry> ListPages()
     {
-        var query = (from lo in oreDb.LocEntries
-            where lo.Entry.AttrId == SeedEntryTypes.Department.PropId
+        var query = (from lo in SofanDbContext.LocEntry
+            where lo.Entry.AttributeId == SeedEntryTypes.Department.PropId
             where lo.CultureId == CultureId
             orderby lo.Entry.Order
             select new VmEntry
@@ -1239,51 +1274,51 @@ public class OreLoc(
 
     public List<RelatedEntryAttributes> ListEntryAttributes(string id)
     {
-        var query = (from re in oreDb.RelatedEntryAttributes
+        var query = (from re in SofanDbContext.RelatedEntryAttributes
             where re.EntryId.ToString() == id
-            where re.Attribute.ParentId == SeedStatic.EntryContentTypes.PropId
+            where re.SofAttribute.ParentId == SeedStatic.EntryContentTypes.PropId
             select re).ToList();
         return query;
     }
     public async Task<bool> ToggleEntryStatus(string id)
     {
-        var a = oreDb.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
+        var a = SofanDbContext.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
         if (a == null) return false;
         a.Status = a.Status == 0 ? (byte)1 : (byte)0;
-        oreDb.Entry(a).State = EntityState.Modified;
-        return await oreDb.SaveChangesAsync() > 0;
+        SofanDbContext.Entry(a).State = EntityState.Modified;
+        return await SofanDbContext.SaveChangesAsync() > 0;
     }
 
     public async Task<bool> ReorderEntry(string id, string masterId, int order)
     {
-        var re = oreDb.RelatedEntries.FirstOrDefault(c =>
+        var re = SofanDbContext.RelatedEntries.FirstOrDefault(c =>
             c.MasterId.ToString() == masterId && c.SlaveId.ToString() == id);
         if (re != null)
         {
             re.Order = order;
         }
 
-        return await oreDb.SaveChangesAsync() > 0;
+        return await SofanDbContext.SaveChangesAsync() > 0;
     }
 
     public async Task<bool> DeleteEntry(string id)
     {
-        var re = oreDb.RelatedEntries.Where(c => c.MasterId.ToString() == id || c.SlaveId.ToString() == id)
+        var re = SofanDbContext.RelatedEntries.Where(c => c.MasterId.ToString() == id || c.SlaveId.ToString() == id)
             .ToList();
         if (re.Count != 0)
         {
-            oreDb.RelatedEntries.RemoveRange(re);
+            SofanDbContext.RelatedEntries.RemoveRange(re);
         }
 
-        var entry = oreDb.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
-        if (entry != null) oreDb.Entries.Remove(entry);
-        return await oreDb.SaveChangesAsync() > 0;
+        var entry = SofanDbContext.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
+        if (entry != null) SofanDbContext.Entries.Remove(entry);
+        return await SofanDbContext.SaveChangesAsync() > 0;
     }
     public string PageCover(string id)
     {
-        var query = (from e in oreDb.Entries
+        var query = (from e in SofanDbContext.Entries
             where e.EntryId.ToString() == id
-            join lo in oreDb.LocEntries on e.EntryId equals lo.EntryId
+            join lo in SofanDbContext.LocEntry on e.EntryId equals lo.EntryId
             where lo.CultureId=="en"
             select new VmEntry
             {

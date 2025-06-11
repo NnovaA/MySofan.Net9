@@ -7,7 +7,7 @@ public class Activity
     public Guid ActById { get; set; }
     public Guid ActOnId { get; set; }
     public Guid ActToId { get; set; }
-    public DateTime ActionDateTime { get; set; }
+    public DateTime ActionDate { get; set; }
     public byte Status { get; set; }
     public string ActOnRoute { get; set; }
 }

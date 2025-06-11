@@ -1,7 +1,7 @@
-using Ore.Hub;
-using Ore.Lib.ViewModels;
+using Site.lib.ViewModels;
+using Sofan.Hub;
 
-namespace Ore.Lib.Ore.Seed;
+namespace Site.lib.Sofan.Seed;
 
 public class SeedSite
 {

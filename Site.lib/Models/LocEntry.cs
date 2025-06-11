@@ -9,7 +9,7 @@ public class LocEntry
     
         public byte Status { get; set; }
         public string Title { get; set; }
-        public string Subtitle { get; set; }
+        public string SubTitle { get; set; }
         public string ShortDesc { get; set; }
         public string Content { get; set; }
         public string Prop01 { get; set; }
@@ -18,7 +18,7 @@ public class LocEntry
         public string PropUrl { get; set; }
         public string ImageUrl { get; set; }
         public string Reference { get; set; }
-        public long PropData { get; set; }
+        public long PropDate { get; set; }
 
         // Navigation property
         public virtual Culture Culture { get; set; }

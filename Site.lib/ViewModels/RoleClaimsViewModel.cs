@@ -1,6 +1,4 @@
-﻿using Ore.Lib.ViewModels.Auth;
-
-namespace Ore.Lib.ViewModels
+﻿namespace Site.lib.ViewModels
 {
 	public class RoleClaimsViewModel
 	{
