@@ -1,0 +1,1315 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Extensions;
+using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+namespace Site.lib.Services;
+
+public interface IOreLoc
+{
+    string UserId { get; }
+    string SiteName { get; }
+    string CultureId { get; }
+    string UrlSite { get; }
+    string DefaultCulture { get; }
+    void ChangeCulture(string cultureId);
+    List<ViewAttribute> ListParent(long parentId);
+    List<OreCulture> ListCultures();
+    LocAttribute GetLocAttribute(long attrId);
+    LocAttribute GetLocalizeAttribute(long attrId, string langId);
+    LocEntry GetLocalizeEntry(string entryId);
+    string Locale(string resKey);
+    ViewAttribute AttributeById(long id);
+    ViewAttribute AttributeByIdByCultureId(long id, string langId);
+    bool ToggleAttribute(long id);
+    Task<bool> ToggleEntryStatus(string id);
+    bool ReOrderAttribute(long id, byte value);
+    bool DeleteAttribute(long id);
+    Task<bool> DeleteEntry(string id);
+    Task<bool> ReorderEntry(string id, string masterId, int order);
+    Task DeleteRangeEntry(List<OreEntry> ids);
+    List<OreEntry> EntryTypedSlaves(string id, long slaveTypeId);
+    List<OreEntry> EntryTypedMasters(string id, long masterTypeId);
+    Task<long> PostAttribute(ViewAttribute vm);
+    long GetMaxAttributeOrder(long parentId);
+    long SetAttrMaxId(long parentId);
+    Guid PostEntry(long attrId, byte status = 1, int order = 1);
+    void PostRelated(Guid masterId, Guid slaveId, byte status = 1, int order = 0);
+
+    void PostLocale(Guid entryId,
+        string cultureId, string title, long propDate = 0, string subTitle = "", string shortDesc = "",
+        string prop01 = "",
+        string prop02 = "", string prop03 = "", string propUrl = "", string imageUrl = "", string content = "",
+        byte status = 0);
+
+    void AddAction(Guid actOn, long actId);
+    string TimeDifference(DateTime dateGiven, DateTime dateRef);
+    VmEntry GetEntry(string id, string langId);
+    List<VmEntry> ListPageSections(string id, string langId);
+    List<ViewProp002> ListChilds(long id);
+    List<VmImage> EntryImages(string id);
+    List<VmInitialEntry> ListInitials();
+    List<VmEntry> EntryPosts(string id, long typeId, string langId);
+
+    (List<VmEntry> Posts, PaginationInfo Pagination) PagedEntryPosts(string entryId, long childTypeId,
+        string cultureId, int pageNumber = 1, int pageSize = 6);
+    List<VmEntry> CountedEntryPosts(string id, long typeId, string langId, int count);
+    public List<VmAddress> EntryAddresses(string id);
+    List<VmImage> GalleryImages(string id);
+    List<VmImage> EntryFiles(string id);
+    List<VmVideo> EntryVideos(string id, string langId);
+    VmVideoGallery VideoGallery(string id);
+    List<VmVideo> GalleryVideos(string id);
+    VmPhotoGallery PhotoGallery(string id);
+    List<VmVideoGallery> EntryVideoGalleries(string id);
+    Guid PostLink(VmSiteLink vm);
+    List<VmSiteLink> EntryLinks(string id);
+    List<VmSiteLink> EntryEmails(string id);
+    List<VmPhone> EntryPhones(string id);
+    Guid PostPhone(VmPhone vm);
+    bool IsImage(string fileUrl);
+    List<VmEntry> ListPages();
+    List<RelatedEntryAttributes> ListEntryAttributes(string id);
+    string PageCover(string id);
+    bool IsValidJson(string jsonString);
+}
+
+public class OreLoc(
+    OreDb oreDb,
+    IHttpContextAccessor xtx) : IOreLoc
+{
+    private readonly HttpContext _ctx = xtx.HttpContext;
+    public string DefaultCulture => "en";
+    public string UrlSite => ConfigHub.Site;
+    public string CurrentUrl => _ctx.Request.GetDisplayUrl();
+
+    public string UserId => _ctx.User.Identity is { IsAuthenticated: true }
+        ? new Guid(_ctx.User.Claims.First(c => c.Type == "Id" | c.Type == "NameIdentifier").Value).ToString()
+        : "";
+
+    public string SiteName => ConfigHub.AppName;
+
+    public string CultureId
+    {
+        get
+        {
+            _ctx.Request.Cookies.TryGetValue(ConfigHub.CultureCookie, out var culId);
+            if (!string.IsNullOrEmpty(culId))
+            {
+                return culId;
+            }
+
+            culId = DefaultCulture;
+            var url = CurrentUrl;
+            var uriBuilder = new UriBuilder(url);
+            var segments = uriBuilder.Path.Split(['/'], StringSplitOptions.RemoveEmptyEntries);
+            foreach (var t in segments)
+            {
+                if (ListCultures().All(c => c.CultureId != t)) continue;
+                culId = t;
+                break;
+            }
+
+            ChangeCulture(culId);
+            return culId;
+        }
+    }
+
+    public void ChangeCulture(string cultureId)
+    {
+        var options = new CookieOptions
+        {
+            Expires = DateTimeOffset.Now.AddDays(365),
+            SameSite = SameSiteMode.Lax,
+            Secure = true,
+            HttpOnly = true,
+            Path = "/"
+        };
+        if (!ConfigHub.IsLocal)
+        {
+            options.Domain = "." + ConfigHub.PublicSite;
+        }
+
+        _ctx.Response.Cookies.Delete(ConfigHub.CultureCookie);
+        _ctx.Response.Cookies.Append(ConfigHub.CultureCookie, cultureId, options);
+    }
+
+    public string UserCulture
+    {
+        get
+        {
+            _ctx.Request.Headers.TryGetValue("Culture-Id", out var culId);
+            if (!string.IsNullOrEmpty(culId))
+            {
+                return culId;
+            }
+
+            _ctx.Response.Headers.Remove("Culture-Id");
+            _ctx.Response.Headers.Append("Culture-Id", DefaultCulture);
+            return DefaultCulture;
+        }
+    }
+
+    public List<VmCulture> AdminListCultures()
+    {
+        var query = (from c in oreDb.Cultures
+            select new VmCulture
+            {
+                CultureId = c.CultureId,
+                Name = c.Name,
+                UiCulture = c.UiCulture,
+                Priority = c.Order,
+                IsPrimary = c.IsPrimary,
+                IsPublic = c.IsPublic,
+                IsAdmin = c.IsAdmin,
+            }).OrderBy(c => c.Priority).ToList();
+        return query;
+    }
+
+    public VmCulture GetCultureById(string id)
+    {
+        var query = (from c in oreDb.Cultures
+            where c.CultureId == id
+            orderby c.Order
+            select new VmCulture
+            {
+                CultureId = c.CultureId,
+                Name = c.Name,
+                UiCulture = c.UiCulture,
+                Priority = c.Order,
+                IsPrimary = c.IsPrimary,
+                IsPublic = c.IsPublic,
+                IsAdmin = c.IsAdmin,
+            }).FirstOrDefault();
+        return query;
+    }
+
+    public List<OreCulture> ListCultures()
+    {
+        return oreDb.Cultures.Where(c => c.IsPublic == true).OrderBy(c => c.Order).ToList();
+    }
+
+    public List<ViewAttribute> ListParent(long parentId)
+    {
+        var query = (from lo in oreDb.LocAttributes
+            where lo.Attribute.ParentId == parentId
+            where lo.CultureId == CultureId
+            select new ViewAttribute
+            {
+                AttrId = lo.AttrId,
+                Name = lo.Name,
+                Misc01 = lo.Misc001,
+                Misc02 = lo.Misc002,
+                Misc03 = lo.Misc003,
+                Status = lo.Attribute.Status,
+                Order = lo.Attribute.Order
+            }).ToList();
+        foreach (var cat in query)
+        {
+            var locs = (from o in oreDb.Cultures
+                let Lo = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == cat.AttrId && c.CultureId == o.CultureId)
+                where Lo != null
+                select o.CultureId).ToList();
+
+            cat.Locs = locs;
+        }
+
+        return query;
+    }
+
+    public string Locale(string resKey) => oreDb.Localizes
+        .FirstOrDefault(x => x.ResKey.Trim().ToLower() == resKey.Trim().ToLower() && x.CultureId == CultureId)?.Value;
+
+    public LocAttribute GetLocAttribute(long attrId)
+    {
+        var ao = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == attrId && c.CultureId == CultureId);
+        ao ??= oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == attrId && c.CultureId == DefaultCulture);
+        return ao;
+    }
+
+    public LocAttribute GetLocalizeAttribute(long attrId, string langId)
+    {
+        var ao = oreDb.LocAttributes.Include(c => c.Attribute)
+            .FirstOrDefault(c => c.AttrId == attrId && c.CultureId == langId);
+        ao ??= oreDb.LocAttributes.Include(c => c.Attribute)
+            .FirstOrDefault(c => c.AttrId == attrId && c.CultureId == DefaultCulture);
+        return ao;
+    }
+
+    public LocEntry GetLocalizeEntry(string entryId)
+    {
+        //Lx = TranslateString("Untitled");
+        var lx = oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == CultureId);
+        lx ??= oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
+        return lx;
+    }
+
+    public LocEntry GetLocalizeEntryWithCulture(string entryId, string langId)
+    {
+        //Lx = TranslateString("Untitled");
+        var lx = oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == langId);
+        lx ??= oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == entryId && c.CultureId == DefaultCulture);
+        return lx;
+    }
+
+    public long SetAttrMaxId(long parentId)
+    {
+        long count = oreDb.Attributes.Count();
+        if (count == 0)
+        {
+            return 1;
+        }
+
+        count = oreDb.Attributes.Count(c => c.ParentId == parentId);
+        if (count == 0)
+        {
+            return parentId * 100 + 1;
+        }
+
+        return oreDb.Attributes.Where(c => c.ParentId == parentId).Max(c => c.AttrId) + 1;
+    }
+
+    public async Task<long> PostAttribute(ViewAttribute vm)
+    {
+        try
+        {
+            var id = SetAttrMaxId(vm.ParentId);
+            var langId = CultureId;
+            if (vm.CultureId != null)
+            {
+                langId = vm.CultureId;
+            }
+
+            if (vm.AttrId == 0)
+            {
+                var attribute = new OreAttribute
+                {
+                    AttrId = id,
+                    ParentId = vm.ParentId,
+                    Status = vm.Status,
+                    Order = vm.Order,
+                };
+                oreDb.Attributes.Add(attribute);
+                oreDb.Entry(attribute).State = EntityState.Added;
+                var locale = new LocAttribute
+                {
+                    AttrId = id,
+                    CultureId = langId,
+                    Name = vm.Name,
+                    Misc001 = vm.Misc01,
+                    Misc002 = vm.Misc02,
+                    Misc003 = vm.Misc03,
+                    Status = vm.Status
+                };
+                oreDb.Entry(locale).State = EntityState.Added;
+            }
+            else
+            {
+                id = vm.AttrId;
+                var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+                var l = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == langId);
+                if (a != null)
+                {
+                    a.AttrId = id;
+                    a.Status = vm.Status;
+                    a.Order = vm.Order;
+                    if (vm.ParentId != 0)
+                    {
+                        a.ParentId = vm.ParentId;
+                    }
+                }
+
+                if (l != null)
+                {
+                    if (vm.Name != null) l.Name = vm.Name;
+                    if (vm.Misc01 != null) l.Misc001 = vm.Misc01;
+                    if (vm.Misc02 != null) l.Misc002 = vm.Misc02;
+                    if (vm.Misc03 != null) l.Misc003 = vm.Misc03;
+                    l.Status = vm.Status;
+                }
+                else
+                {
+                    var locale = new LocAttribute
+                    {
+                        AttrId = id,
+                        CultureId = langId,
+                        Name = vm.Name,
+                        Misc001 = vm.Misc01,
+                        Misc002 = vm.Misc02,
+                        Misc003 = vm.Misc03,
+                        Status = vm.Status
+                    };
+                    oreDb.LocAttributes.Add(locale);
+                }
+            }
+
+            await oreDb.SaveChangesAsync();
+            return id;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
+    }
+
+    public ViewAttribute AttributeById(long id)
+    {
+        var query = (from at in oreDb.Attributes
+            where at.AttrId == id
+            select new ViewAttribute
+            {
+                AttrId = at.AttrId,
+                ParentId = at.ParentId,
+                Order = at.Order,
+                Status = at.Status,
+            }).FirstOrDefault();
+        if (query == null) return null;
+        var lo = GetLocalizeAttribute(query.AttrId, CultureId);
+        var pa = GetLocalizeAttribute(query.ParentId, CultureId);
+        query.Name = lo.Name;
+        query.ParentName = pa.Name;
+        query.Misc01 = lo.Misc001;
+        query.Misc02 = lo.Misc002;
+        query.Misc03 = lo.Misc003;
+        return query;
+    }
+
+    public ViewAttribute AttributeByIdByCultureId(long id, string langId)
+    {
+        var q = (from at in oreDb.Attributes
+            where at.AttrId == id
+            select new ViewAttribute
+            {
+                AttrId = at.AttrId,
+                ParentId = at.ParentId,
+                Order = at.Order,
+                Status = at.Status,
+            }).FirstOrDefault();
+        var lo = oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == langId);
+        lo ??= oreDb.LocAttributes.FirstOrDefault(c => c.AttrId == id && c.CultureId == "en");
+        if (lo == null) return null;
+        q!.Name = lo.Name;
+        q.Misc01 = lo.Misc001;
+        q.Misc02 = lo.Misc002;
+        q.Misc03 = lo.Misc003;
+        return q;
+    }
+
+    public long GetMaxAttributeOrder(long parentId)
+    {
+        var query = oreDb.Attributes.Where(c => c.ParentId == parentId).Select(c => (int?)c.Order).Max() + 1 ??
+                    1;
+        return query;
+    }
+
+    public bool DeleteAttribute(long id)
+    {
+        using (oreDb)
+        {
+            if (id! <= 0) return false;
+            var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+            if (a != null) oreDb.Attributes.Remove(a);
+            return oreDb.SaveChanges() > 0;
+        }
+    }
+
+    public async Task DeleteRangeEntry(List<OreEntry> ids)
+    {
+        oreDb.Entries.RemoveRange(ids);
+        await oreDb.SaveChangesAsync();
+    }
+
+    public List<OreEntry> EntryTypedSlaves(string id, long slaveTypeId)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == slaveTypeId
+            select re.SlaveEntry).ToList();
+        return query;
+    }
+
+    public List<OreEntry> EntryTypedMasters(string id, long masterTypeId)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.SlaveId.ToString() == id
+            where re.MasterEntry.AttrId == masterTypeId
+            select re.MasterEntry).ToList();
+        return query;
+    }
+
+    public bool ToggleAttribute(long id)
+    {
+        using (oreDb)
+        {
+            var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+            if (a == null) return false;
+            var active = a.Status;
+            {
+                active = active == 0 ? (byte)1 : (byte)0;
+                a.Status = active;
+                oreDb.LocAttributes.Where(c => c.AttrId == id).ToList().ForEach(c => c.Status = active);
+                if (oreDb.SaveChanges() > 0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public bool ReOrderAttribute(long id, byte value)
+    {
+        var a = oreDb.Attributes.FirstOrDefault(c => c.AttrId == id);
+        if (a == null) return false;
+        a.Order = value;
+        var res = oreDb.SaveChanges() > 0;
+        return res;
+    }
+
+    public Guid PostEntry(long attrId, byte status = 1, int order = 1)
+    {
+        var entryId = Guid.NewGuid();
+        OreEntry cIe = new()
+        {
+            EntryId = entryId,
+            AttrId = attrId,
+            AddedBy = string.IsNullOrEmpty(UserId) ? entryId : Guid.Parse(UserId),
+            DateAdded = DateTime.UtcNow.Ticks,
+            Order = order,
+            Status = status
+        };
+        oreDb.Entries.Add(cIe);
+        oreDb.Entry(cIe).State = EntityState.Added;
+        return entryId;
+    }
+
+    public void PostLocale(Guid entryId,
+        string cultureId,
+        string title,
+        long propDate = 0,
+        string subTitle = "",
+        string shortDesc = "",
+        string prop01 = "",
+        string prop02 = "",
+        string prop03 = "",
+        string propUrl = "",
+        string imageUrl = "",
+        string content = "",
+        byte status = 0)
+    {
+        var loc = oreDb.LocEntries.Include(x => x.Entry)
+            .FirstOrDefault(c => c.EntryId == entryId && c.CultureId == cultureId);
+        if (loc == null)
+        {
+            LocEntry cLe = new()
+            {
+                EntryId = entryId,
+                CultureId = cultureId,
+                Title = title,
+                PropDate = propDate,
+                SubTitle = subTitle,
+                ShortDesc = shortDesc,
+                Prop01 = prop01,
+                Prop02 = prop02,
+                Prop03 = prop03,
+                Content = content,
+                PropUrl = propUrl,
+                ImageUrl = imageUrl,
+                Status = status
+            };
+            oreDb.LocEntries.Add(cLe);
+            oreDb.Entry(cLe).State = EntityState.Added;
+        }
+        else
+        {
+            if (!string.IsNullOrEmpty(title))
+            {
+                loc.Title = title;
+            }
+
+            if (!string.IsNullOrEmpty(subTitle))
+            {
+                loc.SubTitle = subTitle;
+            }
+
+            if (!string.IsNullOrEmpty(prop01))
+            {
+                loc.Prop01 = prop01;
+            }
+
+            if (!string.IsNullOrEmpty(prop02))
+            {
+                loc.Prop02 = prop02;
+            }
+
+            if (!string.IsNullOrEmpty(prop03))
+            {
+                loc.Prop03 = prop03;
+            }
+
+            if (!string.IsNullOrEmpty(shortDesc))
+            {
+                loc.ShortDesc = shortDesc;
+            }
+
+            if (!string.IsNullOrEmpty(propUrl))
+            {
+                loc.PropUrl = propUrl;
+            }
+
+            if (!string.IsNullOrEmpty(imageUrl))
+            {
+                loc.ImageUrl = imageUrl;
+            }
+
+            if (propDate != 0)
+            {
+                loc.PropDate = propDate;
+            }
+
+            if (!string.IsNullOrEmpty(content))
+            {
+                loc.Content = content;
+            }
+
+            oreDb.Entry(loc).State = EntityState.Modified;
+        }
+    }
+
+    public void PostRelated(Guid masterId, Guid slaveId, byte status = 1, int order = 0)
+    {
+        if (oreDb.RelatedEntries.Any(c => c.MasterId == masterId & c.SlaveId == slaveId)) return;
+        var coRe = new RelatedEntries
+        {
+            MasterId = masterId,
+            SlaveId = slaveId,
+            Status = status,
+            Order = order
+        };
+        oreDb.RelatedEntries.Add(coRe);
+        oreDb.Entry(coRe).State = EntityState.Added;
+    }
+
+    public void AddAction(Guid actOn, long actId)
+    {
+        oreDb.Activities.Add(new OreActivity
+        {
+            ActById = Guid.Parse(UserId),
+            ActOnId = actOn,
+            ActionId = actId,
+            Status = 0,
+            ActionDate = DateTime.UtcNow,
+        });
+    }
+
+    public VmEntry GetEntry(string id, string langId)
+    {
+        var query = (from e in oreDb.Entries
+            where e.EntryId.ToString() == id
+            join lo in oreDb.LocEntries on e.EntryId equals lo.EntryId
+            where lo.CultureId == langId
+            select new VmEntry
+            {
+                Id = id,
+                CultureId = langId,
+                TypeId = e.AttrId,
+                Title = !string.IsNullOrEmpty(lo.Title) ? lo.Title : "",
+                SubTitle = !string.IsNullOrEmpty(lo.SubTitle) ? lo.SubTitle : "",
+                ShortDesc = !string.IsNullOrEmpty(lo.ShortDesc) ? lo.ShortDesc : "",
+                Prop01 = !string.IsNullOrEmpty(lo.Prop01) ? lo.Prop01 : "",
+                Prop02 = !string.IsNullOrEmpty(lo.Prop02) ? lo.Prop02 : "",
+                Prop03 = !string.IsNullOrEmpty(lo.Prop03) ? lo.Prop03 : "",
+                Reference = !string.IsNullOrEmpty(lo.Reference) ? lo.Reference : "",
+                PropUrl = !string.IsNullOrEmpty(lo.PropUrl) ? lo.PropUrl : "",
+                ImageUrl = !string.IsNullOrEmpty(lo.ImageUrl) ? lo.ImageUrl : "",
+                PropDate = new DateTime(lo.PropDate),
+                Content = !string.IsNullOrEmpty(lo.Content) ? lo.Content : "",
+                Status = e.Status,
+                Order = e.Order
+            }).FirstOrDefault();
+        if (query == null) return null;
+        if (!string.IsNullOrEmpty(query.ImageUrl))
+        {
+            if (IsValidJson(query.ImageUrl))
+            {
+                var postImages = JsonConvert.DeserializeObject<PostImages>(query.ImageUrl);
+                if (postImages is not null)
+                {
+                    query.PostImage = JsonConvert.DeserializeObject<PostImages>(query.ImageUrl);
+                }
+            }
+        }
+
+        var chTypeId = ListInitials().FirstOrDefault(c => c.EntryId.ToString() == id);
+        if (chTypeId == null) return query;
+        if (chTypeId.ChildTypeId != -1)
+        {
+            query!.ChildTypeId = chTypeId.ChildTypeId;
+        }
+
+        return query;
+    }
+
+    public List<VmEntry> ListPageSections(string id, string langId)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedEntryTypes.Section.PropId ||
+                  re.SlaveEntry.AttrId == SeedEntryTypes.Slider.PropId
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == langId
+            orderby lo.Entry.Order
+            select new VmEntry
+            {
+                Id = re.SlaveId.ToString(),
+                CultureId = langId,
+                TypeId = re.SlaveEntry.AttrId,
+                Title = !string.IsNullOrEmpty(lo.Title) ? lo.Title : "",
+                SubTitle = !string.IsNullOrEmpty(lo.SubTitle) ? lo.SubTitle : "",
+                ShortDesc = !string.IsNullOrEmpty(lo.ShortDesc) ? lo.ShortDesc : "",
+                Prop01 = !string.IsNullOrEmpty(lo.Prop01) ? lo.Prop01 : "",
+                Prop02 = !string.IsNullOrEmpty(lo.Prop02) ? lo.Prop02 : "",
+                Prop03 = !string.IsNullOrEmpty(lo.Prop03) ? lo.Prop03 : "",
+                Reference = !string.IsNullOrEmpty(lo.Reference) ? lo.Reference : "",
+                PropUrl = !string.IsNullOrEmpty(lo.PropUrl) ? lo.PropUrl : "",
+                ImageUrl = !string.IsNullOrEmpty(lo.ImageUrl) ? lo.ImageUrl : "",
+                PropDate = new DateTime(lo.PropDate),
+                Content = !string.IsNullOrEmpty(lo.Content) ? lo.Content : "",
+                Status = lo.Entry.Status
+            }).ToList();
+        return query;
+    }
+
+    public string TimeDifference(DateTime dateGiven, DateTime dateRef)
+    {
+        var difference = dateRef - dateGiven;
+        if (difference.TotalSeconds < 60)
+        {
+            return difference.Seconds == 1 ? "just now" : $"since {difference.Seconds} secs";
+        }
+
+        if (difference.TotalMinutes < 60)
+        {
+            return difference.Minutes == 1 ? "since 1 minute" : $"since {difference.Minutes} minutes";
+        }
+
+        if (difference.TotalHours < 24)
+        {
+            return difference.Hours == 1 ? "since 1 hour" : $"since {difference.Hours} hours";
+        }
+
+        switch (difference.TotalDays)
+        {
+            case < 30:
+                return difference.Days == 1 ? "since 1 day" : $"since {difference.Days} days";
+            case < 365:
+            {
+                var months = (int)(difference.TotalDays / 30);
+                return months == 1 ? "since 1 month" : $"since {months} months";
+            }
+            default:
+            {
+                var years = (int)(difference.TotalDays / 365);
+                return years == 1 ? "since 1 year" : $"since {years} years";
+            }
+        }
+    }
+
+    public List<ViewProp002> ListChilds(long id)
+    {
+        var query = (from at in oreDb.Attributes
+            where at.ParentId == id
+            where at.AttrId != 0
+            orderby at.Order
+            select new ViewProp002
+            {
+                Id = at.AttrId,
+                Priority = at.Order,
+                Status = at.Status,
+            }).ToList();
+        foreach (var r in query)
+        {
+            var lo = GetLocAttribute(r.Id);
+            if (lo == null) continue;
+            r.Name = lo.Name;
+            r.Icon = lo.Misc001;
+        }
+
+        return query;
+    }
+
+    public List<VmImage> EntryImages(string id)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedTypes.Image.PropId
+            where re.Status == 1
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == "en"
+            select new VmImage
+            {
+                Id = lo.EntryId.ToString(),
+                Title = lo.Title ?? "",
+                Url = lo.ImageUrl ?? ""
+            }).ToList();
+        return query;
+    }
+
+    public List<VmInitialEntry> ListInitials()
+    {
+        List<VmInitialEntry> secs = [];
+        secs.AddRange(SeedSite.Deps);
+        secs.AddRange(SeedSite.CustemPages);
+        secs.AddRange(SeedHomeSections.Secs);
+        secs.AddRange(SeedAboutSections.Secs);
+        return secs;
+    }
+
+    public List<VmAddress> EntryAddresses(string id) => (from re in oreDb.RelatedEntries
+        where re.MasterId.ToString() == id
+        where re.SlaveEntry.AttrId == SeedContact.Address.PropId
+        join li in oreDb.Addresses on re.SlaveId equals li.AddressId
+        join go in oreDb.LocAttributes on li.GovId equals go.AttrId
+        where go.CultureId == "en"
+        join co in oreDb.LocAttributes on li.CountryId equals co.AttrId
+        where go.CultureId == "en"
+        select new VmAddress
+        {
+            Id = li.AddressId.ToString(),
+            CountryId = li.CountryId,
+            GovId = li.GovId,
+            AreaId = li.AreaId,
+            Block = li.Block,
+            House = li.House,
+            Floor = li.Floor,
+            ApartmentNo = li.ApartmentNo,
+            OfficeNo = li.OfficeNo,
+            Avenue = li.Avenue,
+            Street = li.Street,
+            Country = co.Name,
+            City = go.Name,
+        }).ToList();
+
+    public List<VmEntry> EntryPosts(string id, long typeId, string langId)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.Status != 2
+            where re.SlaveEntry.AttrId == typeId
+            orderby re.SlaveEntry.Order
+            select new VmEntry
+            {
+                MasterId = id,
+                Id = re.SlaveId.ToString(),
+                TypeId = re.SlaveEntry.AttrId,
+                Status = re.SlaveEntry.Status,
+                Order = re.SlaveEntry.Order,
+                //PostImage=JsonConvert.DeserializeObject<PostImages>(lo.ImageUrl)
+            }).ToList();
+        foreach (var item in query)
+        {
+            var lo = GetLocalizeEntry(item.Id);
+            item.Title = lo.Title;
+            item.SubTitle = !string.IsNullOrEmpty(lo.SubTitle) ? lo.SubTitle : "";
+            item.ShortDesc = !string.IsNullOrEmpty(lo.ShortDesc) ? lo.ShortDesc : "";
+            item.PropUrl = !string.IsNullOrEmpty(lo.PropUrl)
+                ? lo.PropUrl.Contains("http") ? lo.PropUrl : $"{langId}/{lo.PropUrl}"
+                : "";
+            item.ImageUrl = !string.IsNullOrEmpty(lo.ImageUrl) ? lo.ImageUrl : "";
+            item.Prop01 = !string.IsNullOrEmpty(lo.Prop01) ? lo.Prop01 : "";
+            item.Prop02 = !string.IsNullOrEmpty(lo.Prop02) ? lo.Prop02 : "";
+            item.PropDate = new DateTime(lo.PropDate);
+            List<string> locs = [];
+            locs.AddRange(from o in ListCultures()
+                let locale =
+                    oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
+                where locale != null
+                select o.CultureId);
+            item.Locs = locs;
+            var postImages = JsonConvert.DeserializeObject<PostImages>(item.ImageUrl);
+            if (postImages is not null)
+            {
+                item.PostImage = JsonConvert.DeserializeObject<PostImages>(item.ImageUrl);
+            }
+
+            var addresses = EntryAddresses(item.Id);
+            if (addresses is not null)
+            {
+                item.Address = addresses.FirstOrDefault();
+            }
+        }
+
+        return query;
+    }
+
+    public List<VmEntry> CountedEntryPosts(string id, long typeId, string langId, int count)
+    {
+        var query = oreDb.RelatedEntries
+            .Where(re => re.MasterId.ToString() == id)
+            .Where(re => re.SlaveEntry.Status == 1)
+            .Where(re => re.SlaveEntry.AttrId == typeId)
+            .OrderBy(re => re.Order)
+            .Take(count)
+            .Select(re => new VmEntry
+            {
+                MasterId = id,
+                Id = re.SlaveId.ToString(),
+                TypeId = re.SlaveEntry.AttrId,
+                Status = re.SlaveEntry.Status,
+                Order = re.Order,
+            })
+            .ToList();
+
+        foreach (var item in query)
+        {
+            var lo = GetLocalizeEntry(item.Id);
+            item.Title = lo.Title;
+            item.PropUrl = !string.IsNullOrEmpty(lo.PropUrl)
+                ? lo.PropUrl.Contains("http") ? lo.PropUrl : $"{langId}/{lo.PropUrl}"
+                : "";
+            item.ImageUrl = !string.IsNullOrEmpty(lo.ImageUrl) ? lo.ImageUrl : "";
+            item.SubTitle = !string.IsNullOrEmpty(lo.SubTitle) ? lo.SubTitle : "";
+            item.ShortDesc = !string.IsNullOrEmpty(lo.ShortDesc) ? lo.ShortDesc : "";
+            item.Prop01 = !string.IsNullOrEmpty(lo.Prop01) ? lo.Prop01 : "";
+            item.Prop02 = !string.IsNullOrEmpty(lo.Prop02) ? lo.Prop02 : "";
+            item.Prop03 = !string.IsNullOrEmpty(lo.Prop03) ? lo.Prop03 : "";
+            item.Content = !string.IsNullOrEmpty(lo.Content) ? lo.Content : "";
+            item.PropDate = new DateTime(lo.PropDate);
+
+            List<string> locs = [];
+            locs.AddRange(from o in ListCultures()
+                let locale =
+                    oreDb.LocEntries.FirstOrDefault(c =>
+                        c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
+                where locale != null
+                select o.CultureId);
+            item.Locs = locs;
+
+            var postImages = JsonConvert.DeserializeObject<PostImages>(item.ImageUrl);
+            if (postImages is not null)
+            {
+                item.PostImage = JsonConvert.DeserializeObject<PostImages>(item.ImageUrl);
+            }
+        }
+
+        return query;
+    }
+
+    public List<VmImage> GalleryImages(string id)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedTypes.Image.PropId
+            where re.Status == 1
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == "en"
+            select new VmImage
+            {
+                Id = lo.EntryId.ToString(),
+                Title = lo.Title ?? "",
+                Url = lo.ImageUrl ?? ""
+            }).ToList();
+        return query;
+    }
+
+    public List<VmImage> EntryFiles(string id)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedTypes.File.PropId
+            where re.Status == 1
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == "en"
+            select new VmImage
+            {
+                Id = lo.EntryId.ToString(),
+                Title = lo.Title ?? "",
+                Url = lo.ImageUrl ?? ""
+            }).ToList();
+        return query;
+    }
+
+    public List<VmVideo> EntryVideos(string id, string langId)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.Status != 2
+            where re.SlaveEntry.AttrId == SeedTypes.Video.PropId
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == langId
+            orderby re.Order
+            select new VmVideo
+            {
+                MasterId = id,
+                Id = re.SlaveId.ToString(),
+                Status = re.SlaveEntry.Status,
+                Order = re.SlaveEntry.Order,
+                Title = lo.Title,
+                ShortDesc = lo.ShortDesc,
+                VideoUrl = lo.PropUrl,
+                ThumbUrl = lo.ImageUrl,
+                PubDate = new DateTime(lo.PropDate),
+            }).ToList();
+        foreach (var item in query)
+        {
+            List<string> locs = [];
+            locs.AddRange(from o in ListCultures()
+                let Lo = oreDb.LocEntries.FirstOrDefault(c =>
+                    c.EntryId.ToString() == item.Id && c.CultureId == o.CultureId)
+                where Lo != null
+                select o.CultureId);
+            item.Locs = locs;
+        }
+
+        return query;
+    }
+    public (List<VmEntry> Posts, PaginationInfo Pagination) PagedEntryPosts(string entryId, long childTypeId,
+        string cultureId, int pageNumber = 1, int pageSize = 6)
+    {
+        var allPosts = EntryPosts(entryId, childTypeId, cultureId)
+            .Where(c => c.Status == 1)
+            .ToList();
+        var paginationInfo = new PaginationInfo
+        {
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            TotalItems = allPosts.Count
+        };
+        var paginatedPosts = allPosts
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+        return (paginatedPosts, paginationInfo);
+    }
+    public VmVideoGallery VideoGallery(string id)
+    {
+        var query = (from lo in oreDb.LocEntries
+            where lo.CultureId == CultureId
+            where lo.EntryId.ToString() == id
+            select new VmVideoGallery
+            {
+                Id = lo.EntryId.ToString(),
+                Name = lo.Title,
+                ShortDesc = lo.ShortDesc,
+                Cover = lo.ImageUrl
+            }).FirstOrDefault();
+        if (query != null)
+        {
+            query.Videos = GalleryVideos(id);
+        }
+
+        return query;
+    }
+
+    public List<VmVideo> GalleryVideos(string id)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedTypes.Video.PropId
+            where re.Status == 1
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == "en"
+            select new VmVideo
+            {
+                Id = lo.EntryId.ToString(),
+                Title = lo.Title,
+                VideoUrl = lo.PropUrl,
+                ThumbUrl = lo.ImageUrl,
+            }).ToList();
+        return query;
+    }
+
+    public VmPhotoGallery PhotoGallery(string id)
+    {
+        var query = (from lo in oreDb.LocEntries
+            where lo.CultureId == CultureId
+            where lo.EntryId.ToString() == id
+            select new VmPhotoGallery
+            {
+                Id = lo.EntryId.ToString(),
+                Status = lo.Entry.Status,
+                Name = lo.Title,
+                ShortDesc = lo.ShortDesc,
+                Url = lo.PropUrl,
+                Cover = lo.ImageUrl,
+            }).FirstOrDefault();
+        if (query != null)
+        {
+            query.Images = GalleryImages(id);
+        }
+
+        return query;
+    }
+
+    public List<VmVideoGallery> EntryVideoGalleries(string id)
+    {
+        var query = (from re in oreDb.RelatedEntries
+            where re.MasterId.ToString() == id
+            where re.SlaveEntry.AttrId == SeedTypes.PlayList.PropId
+            join lo in oreDb.LocEntries on re.SlaveId equals lo.EntryId
+            where lo.CultureId == CultureId
+            select new VmVideoGallery
+            {
+                Id = lo.EntryId.ToString(),
+                Name = lo.Title ?? "",
+                ShortDesc = lo.ShortDesc ?? "",
+                Cover = lo.ImageUrl,
+                Url = lo.PropUrl,
+                Status = lo.Entry.Status,
+                Order = lo.Entry.Order
+            }).ToList();
+        foreach (var I in query)
+        {
+            I.Videos = EntryVideos(I.Id, CultureId);
+            List<string> locs = [];
+            locs.AddRange(from o in ListCultures()
+                let Lo =
+                    oreDb.LocEntries.FirstOrDefault(c => c.EntryId.ToString() == I.Id && c.CultureId == o.CultureId)
+                where Lo != null
+                select o.CultureId);
+            I.Locs = locs;
+        }
+
+        return query;
+    }
+
+    public Guid PostLink(VmSiteLink vm)
+    {
+        Guid linkId;
+        if (vm.LinkId == "0")
+        {
+            linkId = PostEntry(vm.TypeId);
+            oreDb.LocEntries.Add(new LocEntry()
+            {
+                EntryId = linkId,
+                CultureId = "en",
+                Title = vm.Title,
+                PropUrl = vm.Url,
+                Prop01 = vm.Target,
+                Status = vm.Status
+            });
+            PostRelated(Guid.Parse(vm.MasterId), linkId);
+        }
+        else
+        {
+            linkId = Guid.Parse(vm.LinkId);
+            var link = oreDb.LocEntries.FirstOrDefault(c => c.EntryId == linkId && c.CultureId == "en");
+            if (link != null)
+            {
+                link.PropUrl = vm.Url;
+                link.Prop01 = vm.Target;
+                link.Status = vm.Status;
+            }
+            else
+            {
+                oreDb.LocEntries.Add(new LocEntry()
+                {
+                    EntryId = linkId,
+                    CultureId = "en",
+                    Title = vm.Title,
+                    PropUrl = vm.Url,
+                    Prop01 = vm.Target,
+                    Status = vm.Status
+                });
+            }
+        }
+
+        return linkId;
+    }
+
+    public List<VmSiteLink> EntryLinks(string id) => (from re in oreDb.RelatedEntries
+        where re.MasterId.ToString() == id
+        where re.SlaveEntry.Status == 5
+        where re.SlaveEntry.AttrId != 40102
+        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where li.CultureId == "en"
+        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        where lo.CultureId == "en"
+        select new VmSiteLink
+        {
+            LinkId = li.EntryId.ToString(),
+            Url = li.PropUrl,
+            TypeId = lo.AttrId,
+            TypeName = lo.Name,
+            TypeIcon = lo.Misc001,
+            Status = re.MasterEntry.Status
+        }).ToList();
+
+    public List<VmSiteLink> EntryEmails(string id) => (from re in oreDb.RelatedEntries
+        where re.MasterId.ToString() == id
+        where re.SlaveEntry.Status == 5
+        where re.SlaveEntry.AttrId == SeedContact.Email.PropId
+        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where li.CultureId == "en"
+        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        where lo.CultureId == "en"
+        select new VmSiteLink
+        {
+            LinkId = li.EntryId.ToString(),
+            Url = li.PropUrl,
+            TypeId = lo.AttrId,
+            TypeName = lo.Name,
+            TypeIcon = lo.Misc001,
+            Status = re.MasterEntry.Status
+        }).ToList();
+
+    public List<VmPhone> EntryPhones(string id) => (from re in oreDb.RelatedEntries
+        where re.MasterId.ToString() == id
+        where re.SlaveEntry.Status == 5
+        where re.SlaveEntry.Attribute.ParentId == 402
+        join li in oreDb.LocEntries on re.SlaveId equals li.EntryId
+        where li.CultureId == "en"
+        join lo in oreDb.LocAttributes on re.SlaveEntry.AttrId equals lo.AttrId
+        where lo.CultureId == "en"
+        select new VmPhone
+        {
+            Id = li.EntryId.ToString(),
+            PhoneNo = li.Title,
+            TypeId = lo.AttrId,
+            TypeName = lo.Name,
+            TypeIcon = lo.Misc001,
+            Status = re.MasterEntry.Status
+        }).ToList();
+
+    public Guid PostPhone(VmPhone vm)
+    {
+        Guid phoneId;
+        if (vm.Id == "0")
+        {
+            phoneId = PostEntry(SeedContact.Phone.PropId);
+            oreDb.LocEntries.Add(new LocEntry()
+            {
+                EntryId = phoneId,
+                CultureId = "en",
+                Title = "Phone number",
+                PropUrl = vm.PhoneNo,
+                Status = vm.Status
+            });
+        }
+        else
+        {
+            phoneId = Guid.Parse(vm.Id);
+            var phone = oreDb.LocEntries.FirstOrDefault(c => c.EntryId == phoneId & c.CultureId == "en");
+            if (phone == null)
+            {
+                oreDb.LocEntries.Add(new LocEntry()
+                {
+                    EntryId = phoneId,
+                    CultureId = "en",
+                    Title = "Phone number",
+                    PropUrl = vm.PhoneNo,
+                    Status = vm.Status
+                });
+            }
+            else
+            {
+                phone.PropUrl = vm.PhoneNo;
+                phone.Status = vm.Status;
+                var entry = oreDb.Entries.FirstOrDefault(c => c.EntryId == phoneId);
+                if (entry != null) entry.Status = vm.Status;
+            }
+        }
+
+        PostRelated(Guid.Parse(vm.MasterId), phoneId);
+        return phoneId;
+    }
+
+    public bool IsImage(string fileUrl)
+    {
+        var extension = Path.GetExtension(fileUrl);
+        string[] imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".svg", ".webp"];
+        return Array.Exists(imageExtensions, ext => ext.Equals(extension, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public List<VmEntry> ListPages()
+    {
+        var query = (from lo in oreDb.LocEntries
+            where lo.Entry.AttrId == SeedEntryTypes.Department.PropId
+            where lo.CultureId == CultureId
+            orderby lo.Entry.Order
+            select new VmEntry
+            {
+                Id = lo.EntryId.ToString(),
+                Title = lo.Title,
+            }).ToList();
+        return query;
+    }
+
+    public List<RelatedEntryAttributes> ListEntryAttributes(string id)
+    {
+        var query = (from re in oreDb.RelatedEntryAttributes
+            where re.EntryId.ToString() == id
+            where re.Attribute.ParentId == SeedStatic.EntryContentTypes.PropId
+            select re).ToList();
+        return query;
+    }
+    public async Task<bool> ToggleEntryStatus(string id)
+    {
+        var a = oreDb.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
+        if (a == null) return false;
+        a.Status = a.Status == 0 ? (byte)1 : (byte)0;
+        oreDb.Entry(a).State = EntityState.Modified;
+        return await oreDb.SaveChangesAsync() > 0;
+    }
+
+    public async Task<bool> ReorderEntry(string id, string masterId, int order)
+    {
+        var re = oreDb.RelatedEntries.FirstOrDefault(c =>
+            c.MasterId.ToString() == masterId && c.SlaveId.ToString() == id);
+        if (re != null)
+        {
+            re.Order = order;
+        }
+
+        return await oreDb.SaveChangesAsync() > 0;
+    }
+
+    public async Task<bool> DeleteEntry(string id)
+    {
+        var re = oreDb.RelatedEntries.Where(c => c.MasterId.ToString() == id || c.SlaveId.ToString() == id)
+            .ToList();
+        if (re.Count != 0)
+        {
+            oreDb.RelatedEntries.RemoveRange(re);
+        }
+
+        var entry = oreDb.Entries.FirstOrDefault(c => c.EntryId.ToString() == id);
+        if (entry != null) oreDb.Entries.Remove(entry);
+        return await oreDb.SaveChangesAsync() > 0;
+    }
+    public string PageCover(string id)
+    {
+        var query = (from e in oreDb.Entries
+            where e.EntryId.ToString() == id
+            join lo in oreDb.LocEntries on e.EntryId equals lo.EntryId
+            where lo.CultureId=="en"
+            select new VmEntry
+            {
+                ImageUrl = !string.IsNullOrEmpty(lo.ImageUrl) ? lo.ImageUrl : "",
+            }).FirstOrDefault();
+        var defaultImage=$"{UrlSite}/assets/images/bg/default-cover.jpg";
+        if (query == null || string.IsNullOrEmpty(query.ImageUrl) || !IsValidJson(query.ImageUrl)) return defaultImage;
+        var postImages = JsonConvert.DeserializeObject<PostImages>(query.ImageUrl);
+        if (postImages is not null)
+        {
+            query.PostImage = JsonConvert.DeserializeObject<PostImages>(query.ImageUrl);
+        }
+        return query.PostImage.CoverImage;
+    }
+
+    public bool IsValidJson(string jsonString)
+    {
+        try
+        {
+            JObject.Parse(jsonString);
+
+            return true;
+        }
+        catch (JsonReaderException)
+        {
+            return false;
+        }
+    }
+}
